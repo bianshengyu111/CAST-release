@@ -1,0 +1,7 @@
+numpy>=1.24
+scipy>=1.10
+matplotlib>=3.7
+
+# Optional. Real SGP4 propagation from a user-supplied TLE file.
+# The default Keplerian propagator needs none of these.
+# sgp4>=2.22
