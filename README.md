@@ -114,8 +114,9 @@ alternation rather than sequentially. All constants are named in `src/const.py`.
 Constellation geometry uses the analytic Walker-delta propagator. Real trajectories can
 be derived from public TLE data (CelesTrak, <https://celestrak.org/NORAD/elements/>) by
 passing a TLE file to `WalkerDelta(propagator="sgp4", tle_path=...)`. StarPerf 2.0 is
-obtained from its authors and is not bundled. This repository is archived on Zenodo; the
-DOI will be inserted here and in the paper's Data Availability statement.
+obtained from its authors and is not bundled. The release accompanying the manuscript is
+publicly available at <https://github.com/bianshengyu111/CAST-release>, and this URL is
+cited in the paper's Data Availability Statement.
 
 ## Citation
 
