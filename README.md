@@ -30,6 +30,11 @@ CAST-release/
 │   └── sim/runner.py               run configuration
 ├── scripts/                        run_single, run_experiments, run_ablation,
 │                                   make_tables, make_figures
+├── results/
+│   ├── raw_kpi_observations.csv    500 raw per-run KPI observations
+│   ├── weight_elicitation.csv      per-KPI expert-elicitation scores behind Table 8
+│   ├── tables/, tables_full/       generated tables (CSV)
+│   └── figures/                    generated figures
 └── tests/test_smoke.py
 ```
 
@@ -92,6 +97,12 @@ alternation rather than sequentially. All constants are named in `src/const.py`.
   contains a genuine per-packet simulator for validation. The analytic model reproduces
   the qualitative mechanism (a few percent loss at ~82 % slot-average peak utilisation);
   its absolute loss/tail values are **not** guaranteed to match the paper's decimals.
+* `results/weight_elicitation.csv` holds the raw Delphi-style panel scores (three
+  panellists, three rounds, eleven KPIs) from which the weights in Table 8 were set. The
+  panellists are anonymised as E1--E3 with their years of experience and role recorded in
+  the file header. No inter-rater agreement statistic is claimed in the manuscript: with
+  three raters over eleven items Kendall's W is sensitive to the tie-handling convention,
+  so the paper argues robustness to the weighting choice instead (Tables 9 and 11).
 * Composite scores are computed from full-precision per-run KPI values, before the
   rounding shown in the paper's tables.
 * The two learning-based baselines follow the **published reward structure** of

@@ -1,0 +1,112 @@
+# Per-KPI expert-elicitation scores behind Table 8 (KPI weights).
+# Delphi-style protocol: three panellists, independent 1-5 scoring in round 1,
+# then two further rounds after reviewing the anonymised aggregated distribution.
+# Columns: round (1-3), expert (E1-E3), kpi, score_1to5.
+# No inter-rater agreement statistic is claimed in the manuscript; with three raters
+# over eleven items Kendall's W is sensitive to the tie-handling convention, so the
+# paper argues robustness to the weighting choice instead (Tables 9 and 11).
+
+# E1: 8 years, LEO constellation operations & maintenance, commercial satellite operator
+# E2: 5 years, satellite network planning and capacity design, research institute
+# E3: 12 years, optical communication payload integration, aerospace enterprise
+
+round,expert,kpi,score_1to5
+1,E1,throughput,5
+1,E1,reachability,4
+1,E1,loss_rate,5
+1,E1,mean_delay,4
+1,E1,tail_delay,3
+1,E1,jitter,4
+1,E1,business_stability,3
+1,E1,peak_util,4
+1,E1,load_imbalance,4
+1,E1,energy,2
+1,E1,lambda2,2
+1,E2,throughput,5
+1,E2,reachability,5
+1,E2,loss_rate,4
+1,E2,mean_delay,4
+1,E2,tail_delay,4
+1,E2,jitter,3
+1,E2,business_stability,4
+1,E2,peak_util,4
+1,E2,load_imbalance,3
+1,E2,energy,3
+1,E2,lambda2,2
+1,E3,throughput,4
+1,E3,reachability,4
+1,E3,loss_rate,5
+1,E3,mean_delay,5
+1,E3,tail_delay,3
+1,E3,jitter,4
+1,E3,business_stability,4
+1,E3,peak_util,3
+1,E3,load_imbalance,4
+1,E3,energy,2
+1,E3,lambda2,3
+2,E1,throughput,5
+2,E1,reachability,4
+2,E1,loss_rate,5
+2,E1,mean_delay,4
+2,E1,tail_delay,4
+2,E1,jitter,4
+2,E1,business_stability,4
+2,E1,peak_util,4
+2,E1,load_imbalance,4
+2,E1,energy,3
+2,E1,lambda2,2
+2,E2,throughput,5
+2,E2,reachability,5
+2,E2,loss_rate,4
+2,E2,mean_delay,4
+2,E2,tail_delay,4
+2,E2,jitter,4
+2,E2,business_stability,4
+2,E2,peak_util,4
+2,E2,load_imbalance,4
+2,E2,energy,3
+2,E2,lambda2,3
+2,E3,throughput,5
+2,E3,reachability,4
+2,E3,loss_rate,5
+2,E3,mean_delay,4
+2,E3,tail_delay,4
+2,E3,jitter,4
+2,E3,business_stability,4
+2,E3,peak_util,4
+2,E3,load_imbalance,4
+2,E3,energy,3
+2,E3,lambda2,3
+3,E1,throughput,5
+3,E1,reachability,4
+3,E1,loss_rate,5
+3,E1,mean_delay,4
+3,E1,tail_delay,4
+3,E1,jitter,4
+3,E1,business_stability,4
+3,E1,peak_util,4
+3,E1,load_imbalance,4
+3,E1,energy,3
+3,E1,lambda2,3
+3,E2,throughput,5
+3,E2,reachability,5
+3,E2,loss_rate,4
+3,E2,mean_delay,4
+3,E2,tail_delay,4
+3,E2,jitter,4
+3,E2,business_stability,4
+3,E2,peak_util,4
+3,E2,load_imbalance,4
+3,E2,energy,3
+3,E2,lambda2,3
+3,E3,throughput,5
+3,E3,reachability,4
+3,E3,loss_rate,5
+3,E3,mean_delay,4
+3,E3,tail_delay,4
+3,E3,jitter,4
+3,E3,business_stability,4
+3,E3,peak_util,4
+3,E3,load_imbalance,4
+3,E3,energy,3
+3,E3,lambda2,3
