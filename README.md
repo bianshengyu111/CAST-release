@@ -109,8 +109,9 @@ alternation rather than sequentially. All constants are named in `src/const.py`.
   here. This release substitutes an equivalent, documented finite-buffer FIFO queueing
   model so the pipeline is runnable end to end; `src/simulate/discrete_event.py` also
   contains a genuine per-packet simulator for validation. The analytic model reproduces
-  the qualitative mechanism (a few percent loss at ~82 % slot-average peak utilisation);
-  its absolute loss/tail values are **not** guaranteed to match the paper's decimals.
+  the qualitative mechanism (single-digit percentage loss at a peak link utilisation in
+  the high eighties in the exposed configuration); its absolute loss/tail values are
+  **not** guaranteed to match the paper's decimals.
 * `results/weight_elicitation.csv` holds the raw Delphi-style panel scores (three
   panellists, three rounds, eleven KPIs) from which the weights in Table 8 were set. The
   panellists are anonymised as E1--E3 with their years of experience and role recorded in
