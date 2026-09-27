@@ -28,8 +28,7 @@ sys.path.insert(0, str(ROOT))
 from src.metrics.kpi import (ConfigKPIs, KPI_DEFS, composite_scores,  # noqa: E402
                              bandwidth_delay_efficiency)
 
-ORDER = ["CAST", "Wang-MADRL", "6-nearest", "DGL-JCR", "Triangle", "Grid+",
-         "Nie-DTC-DPSO"]
+ORDER = ["CAST", "6-nearest", "Nie-DTC-DPSO", "Triangle", "Grid+"]
 
 
 def load_rows(path: Path):

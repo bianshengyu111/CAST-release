@@ -24,11 +24,11 @@ from ..topology import baselines
 from ..topology.access_mapping import assign_access_stars
 from ..topology.cast import TopologyState, select_cast
 from ..topology.visibility import candidate_edges
-from ..traffic.gravity import (CITY_LATLON, CITY_POP, demand_matrix,
-                               sample_flows)
+from ..traffic.gravity import CITY_LATLON, demand_matrix, sample_flows
 
-# Learning-based baselines evaluated out-of-distribution (manuscript Sec. IV-A).
-OOD_BASELINES = {"Wang-MADRL", "DGL-JCR"}
+# The manuscript's two learning-based baselines (Wang-MADRL, DGL-JCR) are external
+# methods and are not reimplemented in this release, so every algorithm reachable here
+# is either CAST or one of the four non-learning baselines.
 
 
 @dataclass
@@ -79,15 +79,6 @@ def run_configuration(cfg: RunConfig, walker, planes: int, sats_per_plane: int,
                       progress=None) -> ConfigKPIs:
     """Run one full 60-slot scenario and return aggregated KPIs."""
     flows = sample_flows(cfg.n_flows, cfg.seed)
-    # Out-of-distribution demand for the learning-based baselines: the manuscript's RL
-    # policies were trained on traffic distributions 1-6 and tested on 7-10, so their
-    # demand signal is drawn from a different distribution than the one being evaluated.
-    # Geometry-only and rule-based baselines are unaffected (they never see demand), and
-    # CAST sees the true per-slot D(t) directly.
-    # a different demand *geography* (populations rolled by 7 cities): a policy
-    # trained on the original distribution sees a misaligned hotspot map
-    flows_ood = sample_flows(cfg.n_flows, cfg.seed + 10_000,
-                             pop=np.roll(CITY_POP, 7))
     prev_state = None
     fixed_access = None
     obs_list = []
@@ -105,9 +96,7 @@ def run_configuration(cfg: RunConfig, walker, planes: int, sats_per_plane: int,
         demand = demand_matrix(flows, src_sat, dst_sat, walker.active)
 
         cand = candidate_edges(pos_eci)
-        policy_demand = (demand_matrix(flows_ood, src_sat, dst_sat, walker.active)
-                         if cfg.algorithm in OOD_BASELINES else demand)
-        st, _diag = _select_topology(cfg, walker, cand, pos_eci, policy_demand,
+        st, _diag = _select_topology(cfg, walker, cand, pos_eci, demand,
                                      prev_state, planes, sats_per_plane)
         prev_state = st if cfg.algorithm == "CAST" else prev_state
 

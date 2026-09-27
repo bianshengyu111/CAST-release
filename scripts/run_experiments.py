@@ -2,9 +2,9 @@
 # -*- coding: utf-8 -*-
 """Run the full experiment matrix and dump raw per-run KPIs to CSV.
 
-Default matrix (manuscript): 7 algorithms x 5 flow counts x 10 seeds = 350 runs,
-each 60 slots.  Results land in ``results/raw_kpi_observations.csv`` and feed
-``make_tables.py`` / ``make_figures.py``.
+Default matrix: 5 algorithms (CAST + the four non-learning baselines) x 5 flow counts
+x 10 seeds = 250 runs, each 60 slots.  Results land in
+``results/raw_kpi_observations.csv`` and feed ``make_tables.py`` / ``make_figures.py``.
 
 Use ``--jobs N`` to parallelise across processes (runs are independent per seed).
 Use ``--quick`` for a reduced matrix that finishes in minutes and validates the

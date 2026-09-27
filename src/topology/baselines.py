@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """Baseline topology selection rules.
 
-Six baselines, all sharing one interface so that the comparison is apples-to-apples
-(same candidate set, same demand, same evaluation stack).  Every rule produces a
-connected, degree-capped topology; they differ in *which* edges they choose.
+Four rule-based baselines, all sharing one interface so that the comparison is
+apples-to-apples (same candidate set, same demand, same evaluation stack).  Every rule
+produces a connected, degree-capped topology; they differ in *which* edges they choose.
 
 * ``six_nearest``  -- Iridium-style geometric k-nearest rule (k = Delta_max).  Purely
   geometric: ordering is by chord distance, so load plays no role.
@@ -15,22 +15,19 @@ connected, degree-capped topology; they differ in *which* edges they choose.
   A distance objective only pays for a link when it is short, so the solver converges to
   a near-greedy minimal-distance subgraph; this surrogate reproduces that by restricting
   the admissible range.  Distance-only -> low lambda_2, congested hubs.
-* ``wang_madrl``   -- multi-agent RL for LISL scheduling (Wang et al. 2024, ref [19]),
-  rewarded on hop count and energy only: a one-hop traffic proxy minus a distance
-  penalty, with no structural term.
-* ``dgl_jcr``      -- duality-guided graph learning (Gu et al. 2026, ref [27]): the
-  endpoint demand diffused over the candidate graph for a few steps, scored by the
-  product of the diffused signals at an edge's endpoints.
 
-The learning-based baselines reimplement the published **reward structure**, not the
-exact network architectures, and are evaluated out-of-distribution as the manuscript
-states.  Each docstring notes where the surrogate deviates from the original.
+The **two learning-based baselines of the manuscript** (Wang-MADRL, ref [19]; DGL-JCR,
+ref [27]) are *not* part of this release: they are external methods with their own
+networks, training pipelines and hyper-parameters, and a reimplementation of them would
+not be the method that was compared.  The reference evaluator therefore covers CAST and
+the four non-learning baselines; the seven-algorithm comparison of the manuscript is not
+reproduced end to end by this code.
 """
 from __future__ import annotations
 
 import numpy as np
 
-from ..const import ISL_MAX_RANGE_KM, MAX_DEGREE
+from ..const import MAX_DEGREE
 from .cast import TopologyState
 
 
@@ -198,78 +195,11 @@ def select_nie_dtc_dpso(n_sat: int, cand: np.ndarray, range_km: float = 1400.0,
     return st
 
 
-# ---------------------------------------------------------------------------------
-# learning-based baselines (reward-structure surrogates)
-# ---------------------------------------------------------------------------------
-def select_wang_madrl(n_sat: int, cand: np.ndarray, demand: np.ndarray,
-                      max_degree: int = MAX_DEGREE,
-                      d_max: float = ISL_MAX_RANGE_KM, **_ignored) -> TopologyState:
-    """Hop-count + energy reward without any structural term.
-
-    Wang et al. reward the policy on hop count and link energy.  We reproduce that
-    objective as a per-edge utility ``traffic_endpoint_gain - beta * normalised_distance``
-    where the traffic term is a one-hop proxy for hop reduction.  The absence of a
-    spectral/robustness term is precisely the property the manuscript contrasts CAST
-    against.
-    """
-    st = TopologyState(n_sat)
-    cand_map = _cand_lookup(cand)
-    i, j = cand[:, 0].astype(int), cand[:, 1].astype(int)
-    src = demand.sum(axis=1)
-    dst = demand.sum(axis=0)
-    traffic = src[i] + dst[j] + src[j] + dst[i]
-    traffic = traffic / (traffic.max() + 1e-12)
-    score = traffic - 0.5 * (cand[:, 2] / d_max)
-    _fill_to_cap(st, cand, np.argsort(-score), max_degree)
-    _connectivity_closure(st, cand_map, n_sat)
-    return st
-
-
-def select_dgl_jcr(n_sat: int, cand: np.ndarray, demand: np.ndarray,
-                   max_degree: int = MAX_DEGREE, n_diffuse: int = 4,
-                   **_ignored) -> TopologyState:
-    """Graph-learning surrogate: demand diffusion over the candidate graph.
-
-    DGL-JCR jointly learns connectivity and routing.  We approximate the learned
-    representation by diffusing the endpoint demand over the candidate graph for a few
-    steps and scoring an edge by the product of the diffused node signals at its
-    endpoints -- high where an edge joins already well-connected demand regions, which
-    is the behaviour a duality-guided connectivity objective produces.
-    """
-    st = TopologyState(n_sat)
-    cand_map = _cand_lookup(cand)
-    signal = demand.sum(axis=1) + demand.sum(axis=0)
-    if signal.max() > 0:
-        signal = signal / signal.max()
-    adj: list[list[int]] = [[] for _ in range(n_sat)]
-    for a, b, _ in cand:
-        adj[int(a)].append(int(b))
-        adj[int(b)].append(int(a))
-    h = signal.copy()
-    deg = np.array([max(len(a), 1) for a in adj], dtype=float)
-    for _ in range(n_diffuse):
-        nxt = np.zeros_like(h)
-        for u in range(n_sat):
-            acc = 0.0
-            for v in adj[u]:
-                acc += h[v]
-            nxt[u] = 0.5 * h[u] + 0.5 * acc / deg[u]
-        h = nxt
-    i, j = cand[:, 0].astype(int), cand[:, 1].astype(int)
-    score = h[i] * h[j] / (1.0 + cand[:, 2] / 1000.0)
-    _fill_to_cap(st, cand, np.argsort(-score), max_degree)
-    _connectivity_closure(st, cand_map, n_sat)
-    return st
-
-
 REGISTRY = {
     "6-nearest": select_six_nearest,
     "Grid+": select_grid_plus,
     "Triangle": select_triangle,
     "Nie-DTC-DPSO": select_nie_dtc_dpso,
-    "Wang-MADRL": select_wang_madrl,
-    "DGL-JCR": select_dgl_jcr,
 }
 
-ALGORITHMS = ["CAST", "6-nearest", "Wang-MADRL", "DGL-JCR", "Triangle", "Grid+",
-              "Nie-DTC-DPSO"]
+ALGORITHMS = ["CAST", "6-nearest", "Triangle", "Grid+", "Nie-DTC-DPSO"]

@@ -26,8 +26,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt                                 # noqa: E402
 
 LABEL = {"CAST": "CAST (proposed)", "6-nearest": "6-nearest", "Grid+": "Grid+",
-         "Nie-DTC-DPSO": "Nie-DTC-DPSO", "Triangle": "Triangle",
-         "Wang-MADRL": "Wang-MADRL", "DGL-JCR": "DGL-JCR"}
+         "Nie-DTC-DPSO": "Nie-DTC-DPSO", "Triangle": "Triangle"}
 
 
 def main() -> int:

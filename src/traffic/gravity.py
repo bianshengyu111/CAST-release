@@ -82,8 +82,8 @@ def sample_flows(n_flows: int, seed: int, rate_mbps: float = FLOW_RATE_MBPS,
 
     Returns an ``(n_flows, 3)`` float array whose first two columns are integer city
     indices stored as floats for vectorised downstream use.  ``pop`` overrides the city
-    population vector, which is how the out-of-distribution traffic patterns used for
-    the learning-based baselines are generated.
+    population vector, which makes it possible to evaluate a demand pattern shifted away
+    from the one a scenario was drawn from.
     """
     rng = np.random.default_rng(seed)
     w = city_pair_weights(CITY_POP if pop is None else pop)

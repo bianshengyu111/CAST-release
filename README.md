@@ -6,10 +6,19 @@ Reference implementation for
 > Spectral Graph Approach"** — Bian, Huang & Bao, *International Journal of Satellite
 > Communications and Networking* (manuscript IJSCN-5182484).
 
-This is the topology/routing decision layer plus the traffic model, KPI aggregation and
-analysis scripts that produce the paper's tables and figures. It is self-contained: it
-runs with **no external simulator and no network access** (the default propagator is
-analytic; SGP4/TLE propagation is supported but optional).
+This release covers the proposed method (CAST), the four non-learning baselines, the
+routing / traffic / KPI stack, and the analysis scripts that generate the paper's tables
+and figures. It is self-contained: it runs with **no external simulator and no network
+access** (the default propagator is analytic; SGP4/TLE propagation is supported but
+optional).
+
+The manuscript's two **learning-based baselines** — Wang-MADRL [19] and DGL-JCR [27] —
+are *not* reimplemented here. They are external methods with their own networks,
+training pipelines and hyper-parameters; a stand-in reimplementation would not be the
+method that was compared, so the release stops at CAST plus every baseline that needs no
+learning. Consequently the seven-algorithm ranking of Table 4 is **not** reproduced end
+to end by this code, and absolute KPI values are not guaranteed to match the
+manuscript's decimals (see *Notes on scope* and *Revision history*).
 
 ## Layout
 
@@ -21,7 +30,7 @@ CAST-release/
 │   ├── topology/visibility.py      candidate ISLs: d <= 5000 km + Earth-occlusion test
 │   ├── topology/access_mapping.py  city -> access star (highest elevation >= 10 deg)
 │   ├── topology/cast.py            CAST: alternating optimisation (Algorithm 1)
-│   ├── topology/baselines.py       six baselines
+│   ├── topology/baselines.py       four non-learning baselines
 │   ├── spectral/fiedler.py         Fiedler vector: exact Lanczos + double-sweep BFS
 │   ├── routing/congestion_aware.py Eq. (2) weights, residual capacity per assignment
 │   ├── traffic/gravity.py          28-city gravity model, 500-5000 flows
@@ -31,12 +40,15 @@ CAST-release/
 ├── scripts/                        run_single, run_experiments, run_ablation,
 │                                   make_tables, make_figures
 ├── results/
-│   ├── raw_kpi_observations.csv    500 raw per-run KPI observations
 │   ├── weight_elicitation.csv      per-KPI expert-elicitation scores behind Table 8
+│   ├── raw_kpi_observations.csv    generated: raw per-run KPI observations
 │   ├── tables/, tables_full/       generated tables (CSV)
 │   └── figures/                    generated figures
 └── tests/test_smoke.py
 ```
+
+`results/weight_elicitation.csv` is the only tracked file under `results/`; the KPI dumps
+and the generated tables/figures are produced by the scripts above and are git-ignored.
 
 ## Requirements
 
@@ -52,25 +64,27 @@ python scripts/run_experiments.py --quick                              # smoke m
 python scripts/make_tables.py --raw results/raw_kpi_observations.csv
 ```
 
-## Reproducing the paper's tables and figures
+## Running the exposed configuration
 
 ```bash
-# Table 4 / 5 : 7 algorithms x 5 flow counts x 10 seeds x 60 slots
+# five algorithms x 5 flow counts x 10 seeds x 60 slots (the manuscript's protocol)
 python scripts/run_experiments.py --jobs 8
 python scripts/make_tables.py
 
-# Table 6 : congestion regime (single flow count)
+# congestion regime (single flow count)
 python scripts/run_experiments.py --jobs 8 --flows 5000 --seeds 10
 
-# Table 8 : ablation
+# ablation of the CAST score terms
 python scripts/run_ablation.py --jobs 8
 
-# Figures 3-4
+# figures from the raw KPI dump
 python scripts/make_figures.py
 ```
 
 `--jobs N` parallelises across cores; runs are independent per seed. Outputs land in
-`results/`. The full Table 4 matrix takes hours on a workstation.
+`results/`. The full matrix takes hours on a workstation. Tables 4-5 of the manuscript
+cover seven algorithms; the five covered here are run with the same protocol, so the
+resulting tables are the release's own run of that subset, not the manuscript's tables.
 
 ## Algorithm
 
@@ -105,20 +119,47 @@ alternation rather than sequentially. All constants are named in `src/const.py`.
   so the paper argues robustness to the weighting choice instead (Tables 9 and 11).
 * Composite scores are computed from full-precision per-run KPI values, before the
   rounding shown in the paper's tables.
-* The two learning-based baselines follow the **published reward structure** of
-  Wang-MADRL (hop count + energy) and DGL-JCR (connectivity + routing), not the exact
-  network architectures, and are evaluated out-of-distribution as the paper states.
-* **This reference evaluator does not reproduce the paper's exact ranking.** In a sample
-  run (5,000 flows, 1 seed, 3 slots, composite score): DGL-JCR 0.994, Wang-MADRL 0.973,
-  CAST 0.880, 6-nearest 0.767, Nie-DTC-DPSO 0.761, Triangle 0.595, Grid+ 0.193. CAST
-  leads every **non-learning** baseline on loss (0.85 % vs 9.05 % for 6-nearest), delay,
-  energy (41.8 vs 62.7 kWh) and peak utilisation (88 % vs 97.2 %) — the paper's central
-  claim — but the two learning *surrogates* rank above it, whereas the manuscript ranks
-  CAST first. Both reasons are structural: the surrogates place all six edges per node
-  directly from the demand signal, which is stronger than the original networks this
-  release does not reproduce; and the manuscript's own caveat applies, namely that the
-  RL comparison is confounded by an information asymmetry and that absolute KPI values
-  depend on the packet-level engine.
+* **Scope of the comparison.** The evaluator implements CAST and the four non-learning
+  baselines (6-nearest, Grid+, Triangle, Nie-DTC-DPSO). The two learning-based baselines
+  of the manuscript are external methods and are not reimplemented, so the seven-algorithm
+  ranking of Table 4 is not reproduced end to end here. Within the covered set the composite
+  score ranks CAST first, then 6-nearest, Nie-DTC-DPSO, Triangle and Grid+: CAST takes the
+  lowest mean and tail delay, the lowest energy and the lowest load imbalance, while
+  Triangle reaches a lower loss and a marginally lower peak utilisation at six times the
+  delay and seven times the energy. These are the release's own numbers in the exposed
+  configuration, not the manuscript's.
+
+## Revision history
+
+### 2026-09-27 — scope and algorithm corrections
+
+* **The two learning-based baselines were removed from the release.** They were
+  stand-ins that allocated all six terminals per node directly from the offered demand
+  matrix of the slot — an information set no deployed policy has — and their ranking
+  against CAST therefore said more about the stand-in than about the method. Rather than
+  ship a surrogate whose behaviour cannot be defended, the release now covers only CAST
+  and the four non-learning baselines. The manuscript's caveat that the reinforcement
+  learning comparison is confounded still stands.
+* **CAST's 1-swap path had two defects, both fixed.** With the degree budget saturated,
+  a candidate whose *both* endpoints were full evicted one link at each end and added
+  one, so every accepted candidate shrank the active link set by one; and a swap that
+  succeeded at the first endpoint but found nothing evictable at the second returned
+  without adding the edge, dropping a link for nothing. The first is now rejected
+  outright and the second is checked before either endpoint is touched, so a swap is
+  atomic: no link is dropped by a swap that does not complete. The effect is visible over
+  long horizons — without the fixes the active link count fell from 4,123 to 1,076 over
+  ten slots, with peak utilisation above 100 % from slot six onward. The count still
+  declines in this configuration (4,199 to 1,116 over ten slots at 5,000 flows); the
+  passive-removal rule below is the main reason, and it is a property of the rule rather
+  than of the swap.
+* **The passive removal is applied at face value.** Algorithm 1 removes dynamic ISLs that
+  carry no flow, and this implementation applies that to *every* idle link at the end of
+  each slot. In the 5,000-flow configuration that sheds far more links per slot than the
+  per-slot idle churn of the manuscript's ISL-switching table (~6.5 links), because
+  congestion-aware shortest paths leave a large part of the active set unused in any one
+  slot. Active link counts and absolute KPIs over long runs are therefore not expected to
+  match the manuscript's: the release is a readable, runnable reference for the topology
+  and routing rules, not a numerical reproduction of Tables 4-7.
 
 ## Data availability
 

@@ -232,6 +232,12 @@ def select_cast(n_sat: int, positions_km: np.ndarray, demand: np.ndarray,
                 if (min(a, b), max(a, b)) in st.edges:
                     continue
                 if allow_swap:
+                    # guard: if *both* endpoints are saturated, evicting at each end
+                    # would drop two links to add one and shrink the active set, and
+                    # a swap that only succeeds at one end would drop a link for
+                    # nothing.  Rejecting that case keeps every swap atomic.
+                    if deg[a] >= max_degree and deg[b] >= max_degree:
+                        continue
                     # degree budget exhausted: try a 1-swap, evicting the least-used
                     # incident edge, so that a high-scoring candidate can replace a
                     # geometry-only edge once the constellation is saturated
