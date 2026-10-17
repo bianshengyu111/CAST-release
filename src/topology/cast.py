@@ -10,9 +10,11 @@ Alternating optimisation.  Each iteration:
 4. add the highest-scoring edges, in descending order, while the degree constraint
    ``Delta_max`` is respected and the score exceeds the threshold ``delta``.
 
-Static ISLs are not decision variables: they are carried across slots subject only to
-the range re-check and they occupy degree at both endpoints.  Dynamic ISLs are
-passively removed when they go out of range or lose all their flows.
+Static ISLs (the intra-plane ring) are not decision variables: they are carried across
+slots subject only to the range re-check, they occupy degree at both endpoints, and
+they are never idle-removed or evicted by a swap.  Dynamic ISLs are passively removed
+when they go out of range or lose all their flows; the removed set excludes bridges,
+so connectivity is preserved.
 """
 from __future__ import annotations
 
@@ -24,6 +26,7 @@ from ..const import (ALPHA_C, ALPHA_D, DELTA_SCORE, ETA, ISL_CAPACITY_MBPS,
                      ISL_MAX_RANGE_KM, MAX_DEGREE, MAX_ITER,
                      NODE_THRESHOLD_LANCZOS)
 from ..routing.congestion_aware import route_commodities
+from ..simulate.discrete_event import _link_loss
 from ..spectral.fiedler import fiedler_vector
 from .visibility import candidate_edges
 
@@ -181,6 +184,8 @@ def select_cast(n_sat: int, positions_km: np.ndarray, demand: np.ndarray,
     cand = candidate_edges(positions_km, d_max)
     cand_map = {(min(int(a), int(b)), max(int(a), int(b))): float(c)
                 for a, b, c in cand}
+    static_keys = {TopologyState.key(int(a), int(b))
+                   for (a, b) in (static_edges or {})}
 
     st = TopologyState(n_sat)
     if static_edges:
@@ -242,10 +247,10 @@ def select_cast(n_sat: int, positions_km: np.ndarray, demand: np.ndarray,
                     # incident edge, so that a high-scoring candidate can replace a
                     # geometry-only edge once the constellation is saturated
                     if deg[a] >= max_degree and not _evict_least_used(
-                            st, a, deg, util_lookup, bridges):
+                            st, a, deg, util_lookup, bridges, static_keys):
                         continue
                     if deg[b] >= max_degree and not _evict_least_used(
-                            st, b, deg, util_lookup, bridges):
+                            st, b, deg, util_lookup, bridges, static_keys):
                         continue
                 if deg[a] >= max_degree or deg[b] >= max_degree:
                     continue
@@ -269,34 +274,45 @@ def select_cast(n_sat: int, positions_km: np.ndarray, demand: np.ndarray,
 
     # passive removal of idle dynamic ISLs: once a link no longer lies on any flow's
     # path it is dropped, which is what frees degree for the next slot's additions
-    # (Algorithm 1, "passive removal").  Two safeguards keep the removal from hurting:
-    # only non-bridge links are eligible (so the removed set is a subset of the
-    # redundant links and connectivity is preserved with no repair step), and the
-    # pruned topology is accepted only if it does not raise the peak link utilisation.
-    # A strictly additive greedy neighbourhood cannot pass this test on its own once the
-    # degree budget is saturated, so the acceptance test is what makes the passive step
-    # safe rather than merely plausible.
+    # (Algorithm 1, "passive removal").  The removed set is restricted, as in the
+    # algorithm: static ISLs are never eligible (they are not decision variables), and
+    # every removal is individually guarded so the graph stays connected -- edges
+    # whose removal would disconnect the topology are load-bearing and are kept.  The
+    # guard is applied per edge because a set of edges that are each non-bridges can
+    # still jointly disconnect the graph.  The pruned topology is finally accepted
+    # only if it does not raise the peak link utilisation.
     n_idle_removed = 0
     if warm_start and final.loads_mbps:
-        idle = [k for k in st.edges if final.loads_mbps.get(k, 0.0) <= 0.0]
+        idle = [k for k in st.edges
+                if k not in static_keys and final.loads_mbps.get(k, 0.0) <= 0.0]
         if idle:
             bridges = _find_bridges(n_sat, list(st.edges))
             removable = [k for k in idle if k not in bridges]
             if removable:
                 base_peak = max(final.utilization.values()) if final.utilization else 0.0
                 snapshot = dict(st.edges)
+                removed: list[tuple[int, int]] = []
                 for k in removable:
                     st.edges.pop(k, None)
-                idx, dist = st.index_and_dist()
-                pruned = route_commodities(n_sat, idx, dist, comms,
-                                           alpha_d=alpha_d, alpha_c=alpha_c, d_max=d_max,
-                                           batch_size=routing_batch)
-                new_peak = max(pruned.utilization.values()) if pruned.utilization else 0.0
-                if new_peak <= base_peak + 1e-9:
-                    final = pruned
-                    n_idle_removed = len(removable)
-                else:
-                    st.edges = snapshot      # revert: the pruned topology is worse
+                    if _is_connected(n_sat, list(st.edges)):
+                        removed.append(k)
+                    else:
+                        st.edges[k] = snapshot[k]   # load-bearing: keep it
+                if removed:
+                    idx, dist = st.index_and_dist()
+                    pruned = route_commodities(n_sat, idx, dist, comms,
+                                               alpha_d=alpha_d, alpha_c=alpha_c,
+                                               d_max=d_max,
+                                               batch_size=routing_batch)
+                    new_peak = max(pruned.utilization.values()) if pruned.utilization else 0.0
+                    base_deliv = _delivered_frac(final)
+                    new_deliv = _delivered_frac(pruned)
+                    if (new_peak <= base_peak + 1e-9
+                            and new_deliv >= base_deliv - 1e-9):
+                        final = pruned
+                        n_idle_removed = len(removed)
+                    else:
+                        st.edges = snapshot      # revert: the pruned topology is worse
 
     diag = {
         "n_edges": len(st.edges),
@@ -311,13 +327,16 @@ def select_cast(n_sat: int, positions_km: np.ndarray, demand: np.ndarray,
 
 def _evict_least_used(st: TopologyState, node: int, deg: np.ndarray,
                       util_lookup: dict[tuple[int, int], float],
-                      bridges: set[tuple[int, int]] | None = None) -> bool:
+                      bridges: set[tuple[int, int]] | None = None,
+                      protected: set[tuple[int, int]] | None = None) -> bool:
     """Drop the least-used non-bridge incident edge of ``node``; update ``deg`` in place.
 
-    Returns ``True`` when an edge was evicted (so a degree slot is now free).
+    Static ISLs (``protected``) and bridges are never evicted.  Returns ``True`` when
+    an edge was evicted (so a degree slot is now free).
     """
     incident = [k for k in st.edges if (k[0] == node or k[1] == node)
-                and (bridges is None or k not in bridges)]
+                and (bridges is None or k not in bridges)
+                and (protected is None or k not in protected)]
     if not incident:
         return False
     victim = min(incident, key=lambda k: util_lookup.get(k, 0.0))
@@ -325,6 +344,47 @@ def _evict_least_used(st: TopologyState, node: int, deg: np.ndarray,
     deg[victim[0]] -= 1
     deg[victim[1]] -= 1
     return True
+
+
+def _delivered_frac(res, buffer_packets: int = 100, ca2: float = 4.0) -> float:
+    """Delivered fraction of the offered load under the finite-buffer loss model.
+
+    Same per-link loss formula as the KPI evaluation, so the passive-removal
+    acceptance test measures the quantity the reported loss is made of.
+    """
+    delivered = 0.0
+    offered = 0.0
+    for path, (_s, _d, b) in zip(res.paths, res.commodities):
+        p = 1.0
+        for a, c in zip(path[:-1], path[1:]):
+            k = (a, c) if a < c else (c, a)
+            rho = min(res.utilization.get(k, 0.0), 0.9999)
+            p *= (1.0 - _link_loss(rho, buffer_packets, ca2))
+        delivered += b * p
+        offered += b
+    return delivered / offered if offered else 1.0
+
+
+def _is_connected(n_sat: int, edges: list[tuple[int, int]]) -> bool:
+    """BFS reachability check: True iff the undirected graph spans all n_sat nodes."""
+    if n_sat <= 1:
+        return True
+    adj: list[list[int]] = [[] for _ in range(n_sat)]
+    for a, b in edges:
+        adj[a].append(b)
+        adj[b].append(a)
+    seen = [False] * n_sat
+    seen[0] = True
+    stack = [0]
+    count = 1
+    while stack:
+        u = stack.pop()
+        for v in adj[u]:
+            if not seen[v]:
+                seen[v] = True
+                count += 1
+                stack.append(v)
+    return count == n_sat
 
 
 def _find_bridges(n_sat: int, edges: list[tuple[int, int]]) -> set[tuple[int, int]]:

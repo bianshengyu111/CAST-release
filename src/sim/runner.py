@@ -25,6 +25,7 @@ from ..topology.access_mapping import assign_access_stars
 from ..topology.cast import TopologyState, select_cast
 from ..topology.visibility import candidate_edges
 from ..traffic.gravity import CITY_LATLON, demand_matrix, sample_flows
+from ..constellation.walker import static_intra_plane_edges
 
 # The manuscript's two learning-based baselines (Wang-MADRL, DGL-JCR) are external
 # methods and are not reimplemented in this release, so every algorithm reachable here
@@ -50,10 +51,11 @@ class RunConfig:
 
 
 def _select_topology(cfg: RunConfig, walker, cand, positions_eci, demand, prev_state,
-                     planes, sats_per_plane):
+                     planes, sats_per_plane, static_edges=None):
     if cfg.algorithm == "CAST":
         st, diag = select_cast(
             walker.active, positions_eci, demand, prev_state=prev_state,
+            static_edges=static_edges,
             alpha_d=cfg.alpha_d, alpha_c=cfg.alpha_c, eta=cfg.eta,
             delta=cfg.delta, max_iter=cfg.max_iter, mst_init=cfg.mst_init,
             routing_batch=cfg.routing_batch)
@@ -76,12 +78,18 @@ def _select_topology(cfg: RunConfig, walker, cand, positions_eci, demand, prev_s
 
 
 def run_configuration(cfg: RunConfig, walker, planes: int, sats_per_plane: int,
-                      progress=None) -> ConfigKPIs:
-    """Run one full 60-slot scenario and return aggregated KPIs."""
+                      progress=None, observations_out=None) -> ConfigKPIs:
+    """Run one full 60-slot scenario and return aggregated KPIs.
+
+    ``observations_out`` (optional) receives every per-slot ``SlotObservation`` so
+    callers can aggregate quantities beyond the 11 headline KPIs (utilisation
+    concentration, delay decomposition, hop counts).
+    """
     flows = sample_flows(cfg.n_flows, cfg.seed)
     prev_state = None
     fixed_access = None
     obs_list = []
+    static_edges = static_intra_plane_edges(planes, sats_per_plane, walker.active)
 
     for slot in range(cfg.n_slots):
         t_s = slot * SEC_PER_SLOT
@@ -97,7 +105,8 @@ def run_configuration(cfg: RunConfig, walker, planes: int, sats_per_plane: int,
 
         cand = candidate_edges(pos_eci)
         st, _diag = _select_topology(cfg, walker, cand, pos_eci, demand,
-                                     prev_state, planes, sats_per_plane)
+                                     prev_state, planes, sats_per_plane,
+                                     static_edges=static_edges)
         prev_state = st if cfg.algorithm == "CAST" else prev_state
 
         idx, dist = st.index_and_dist()
@@ -117,6 +126,8 @@ def run_configuration(cfg: RunConfig, walker, planes: int, sats_per_plane: int,
         if res.unrouted:
             obs.reachability = max(0.0, 1.0 - res.unrouted / max(len(commodities), 1))
         obs_list.append(obs)
+        if observations_out is not None:
+            observations_out.append(obs)
         if progress:
             progress(slot, obs)
 

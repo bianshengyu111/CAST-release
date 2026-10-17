@@ -132,6 +132,47 @@ alternation rather than sequentially. All constants are named in `src/const.py`.
 
 ## Revision history
 
+### 2026-10-17 — measurement-pipeline corrections (second-round review)
+
+Three changes. Each enforces a property the manuscript already states; none is a
+re-tuning of constants.
+
+* **Static/dynamic ISL semantics (Algorithm 1) are now implemented as specified.**
+  The manuscript separates static ISLs — carried across slots, subject only to the
+  range re-check, never decision variables — from dynamic ISLs, which are passively
+  removed when they go out of range or lose all their flows. The previous release
+  applied idle removal to *every* idle link, so congestion-aware routing's unused
+  links were shed en masse: the active set fell 4,199 to 1,116 over ten slots at
+  5,000 flows, and at the manuscript's 60-slot protocol the graph fragmented
+  (algebraic connectivity reached zero from slot twenty; loss became bimodal with
+  excursions above thirty percent). The release now classifies the intra-plane ring
+  as the static class (`walker.static_intra_plane_edges`), protects it from idle
+  removal and from swap eviction, and guards every idle removal with a per-edge
+  connectivity check — a set of edges that are each non-bridges can still jointly
+  disconnect the graph, so each candidate removal is tested and load-bearing edges
+  are kept. The pruned topology is accepted only if neither peak utilisation nor the
+  delivered fraction (under the same finite-buffer loss model the KPIs use) degrades.
+  With these guards the 60-slot run holds lambda_2 between 0.003 and 0.112 and the
+  active set stabilises near 1,800 links.
+* **The queueing model is exactly the discipline of manuscript Sec. III-E.** Per-hop
+  queueing delay was previously scaled by a 0.35 ms per-hop "framing quantum" (an
+  artefact of reconciling author-side notes) capped at buffer x quantum, which
+  violates the buffer x service-time bound a reader derives from Sec. III-E. The
+  model is now: M/M/1-form waiting Psi(rho) * t_s capped by the full-buffer drain
+  time B * t_s = 100 x 0.586 us = 58.6 us per hop, so path-total queueing is bounded
+  by hops x 58.6 us. `QUEUE_FRAME_QUANTUM_S` is removed from `src/const.py`.
+* **A measurement-pipeline invariant test suite is added (`tests/test_invariants.py`).**
+  It encodes the second-round review's checklist: queueing delay <= buffer x service
+  time x hops for every flow; peak utilisation >= the mean of any link subset (the
+  top-5%-share identity); delivered + lost = offered; Psi(rho) finite and reported
+  utilisation statistics <= 1; and connectivity preserved, including the
+  partial-plane configuration where a satellite has no intra-plane ring link at all.
+
+Consequences: absolute KPIs from this code differ from both the 2026-09-27 release
+runs and the previous manuscript decimals; the CSV files under `results/` are the
+outputs of this code, and `tests/` now covers the measurement pipeline as well as
+the algorithm.
+
 ### 2026-09-27 — scope and algorithm corrections
 
 * **The two learning-based baselines were removed from the release.** They were

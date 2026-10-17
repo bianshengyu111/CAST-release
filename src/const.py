@@ -39,10 +39,10 @@ MIN_ELEVATION_DEG = 10.0     # ground-station mask, Sec. III-D
 FLOW_RATE_MBPS = 40.0        # per-flow peak rate, Sec. IV-A
 
 # --- Queueing model (analytic mode) -------------------------------------------------
-# The manuscript reports path-total T_queue, which includes, per the author-provided
-# note 02_queueing_model.md / 16_fact_confirmations.md, both FIFO waiting and a
-# slotted/framing wait (an effective per-hop service quantum of ~0.35 ms rather than
-# the 0.586 us raw packet transmission time).  We expose that quantum explicitly so
-# the assumption is visible rather than hidden.
-QUEUE_FRAME_QUANTUM_S = 0.35e-3
+# Per-hop queueing delay is the M/M/1-form waiting time Psi(rho) * SERVICE_TIME_S,
+# capped by the time to drain a full buffer, BUFFER_PACKETS * SERVICE_TIME_S = 58.6 us.
+# This is exactly the discipline stated in the manuscript Sec. III-E: one FIFO output
+# queue per ISL direction, fixed 1,500-B packets, 0.586 us service time, 100-packet
+# tail-drop buffer.  No additional per-hop framing term exists; path-total T_queue is
+# therefore bounded by n_hops * 58.6 us.
 TAIL_PERCENTILE = 95.0

@@ -141,3 +141,31 @@ def walker_kuiper_like(**kwargs) -> WalkerDelta:
                     altitude_km=630.0, inclination_deg=51.9)
     defaults.update(kwargs)
     return WalkerDelta(**defaults)
+
+
+def static_intra_plane_edges(planes: int, sats_per_plane: int,
+                             active: int) -> dict[tuple[int, int], float]:
+    """Intra-plane ring ISLs -- the *static* class of the manuscript's Sec. III-B.
+
+    Static ISLs are not decision variables (Algorithm 1): they are carried across
+    slots subject only to the range re-check and are never idle-removed, so the
+    per-plane ring backbone survives passive removal.  Indexing is plane-major,
+    matching ``WalkerDelta`` (satellite ``i`` flies in plane ``i // sats_per_plane``).
+    Lengths are resolved from the slot's candidate set by the caller, so the values
+    here are placeholders.
+    """
+    edges: dict[tuple[int, int], float] = {}
+    for p in range(planes):
+        base = p * sats_per_plane
+        if base >= active:
+            break
+        for k in range(sats_per_plane):
+            i = base + k
+            if i >= active:
+                break
+            j = base + (k + 1) % sats_per_plane
+            if j >= active:
+                continue
+            key = (i, j) if i < j else (j, i)
+            edges[key] = 0.0
+    return edges

@@ -13,13 +13,13 @@ This module offers two interchangeable back-ends:
 
 ``analytic`` (default)
     A closed-form queueing evaluation.  ``T_prop`` and ``T_trans`` are exact given the
-    path; ``T_queue`` uses the same ``Psi(rho)`` penalty that drives routing, scaled by
-    a per-hop queueing quantum (``const.QUEUE_FRAME_QUANTUM_S``) that folds FIFO waiting
-    together with the slotted/framing wait the author note identifies.  Loss uses a
-    finite-buffer overflow estimate ``rho ** (B / (1 + Ca^2))`` in which ``Ca^2`` is the
-    burstiness of the multiplexed arrival process -- this is what makes the coexistence
-    of 82.3 % slot-average peak utilisation and 3.71 % loss physical, per the manuscript's
-    Sec. III-E discussion (sub-slot burstiness, not headroom exhaustion).
+    path; per-hop ``T_queue`` is the M/M/1-form waiting time ``Psi(rho) * t_s`` capped
+    by the time to drain a full buffer, ``B * t_s = 58.6 us``, with ``t_s = 0.586 us``
+    the service time stated in the manuscript Sec. III-E -- so a saturated link cannot
+    produce unbounded delay and path-total queueing is bounded by
+    ``n_hops * 58.6 us``.  Loss uses a finite-buffer overflow estimate
+    ``rho ** (B / (1 + Ca^2))`` in which ``Ca^2`` is the burstiness of the multiplexed
+    arrival process (the manuscript's Sec. III-E sub-slot burstiness discussion).
 
 ``packet``
     A genuine per-packet FIFO finite-buffer simulation.  Faithful but expensive; use it
@@ -37,8 +37,7 @@ import numpy as np
 from scipy.stats import norm
 
 from ..const import (BUFFER_PACKETS, C_KM_S, ISL_CAPACITY_MBPS, PACKET_BITS,
-                     QUEUE_FRAME_QUANTUM_S, SEC_PER_SLOT, SERVICE_TIME_S,
-                     TAIL_PERCENTILE)
+                     SEC_PER_SLOT, SERVICE_TIME_S, TAIL_PERCENTILE)
 
 
 def _psi(rho: float, eps: float = 1e-6) -> float:
@@ -87,7 +86,7 @@ def evaluate_slot(paths: Sequence[Sequence[int]],
                   n_sat: int,
                   ca2: float = 4.0,
                   buffer_packets: int = BUFFER_PACKETS,
-                  quantum_s: float = QUEUE_FRAME_QUANTUM_S,
+                  service_time_s: float = SERVICE_TIME_S,
                   window_s: float = 60 * SEC_PER_SLOT,
                   kappa: float = 0.05,
                   overload_threshold: float = 0.75,
@@ -114,9 +113,11 @@ def evaluate_slot(paths: Sequence[Sequence[int]],
         for a, c in zip(path[:-1], path[1:]):
             k = (min(a, c), max(a, c))
             rho = min(utilization.get(k, 0.0), 0.9999)
-            # per-hop queueing delay; bounded by the time to drain a full buffer at the
-            # framing quantum, so a saturated link cannot produce unbounded delay
-            tq_hops.append(min(_psi(rho) * quantum_s, buffer_packets * quantum_s))
+            # per-hop queueing delay: M/M/1-form waiting Psi(rho) * t_s, bounded by the
+            # time to drain a full buffer B * t_s = 58.6 us, so a saturated link cannot
+            # produce unbounded delay (Sec. III-E queueing model)
+            tq_hops.append(min(_psi(rho) * service_time_s,
+                               buffer_packets * service_time_s))
             p_survive *= (1.0 - _link_loss(rho, buffer_packets, ca2))
         t_queue = sum(tq_hops) * 1e3
         mean_ms = t_prop + t_trans + t_queue

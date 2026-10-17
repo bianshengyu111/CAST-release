@@ -136,18 +136,31 @@ def route_commodities(n_sat: int,
 def total_queue_delay_ms(paths: Sequence[Sequence[int]],
                          util_lookup: dict[tuple[int, int], float],
                          capacity_weight: Sequence[float] | None = None,
-                         frame_quantum_s: float | None = None) -> float:
-    """Mean per-flow queueing delay [ms] using the per-hop Psi penalty."""
-    from ..const import QUEUE_FRAME_QUANTUM_S
-    q = QUEUE_FRAME_QUANTUM_S if frame_quantum_s is None else frame_quantum_s
+                         service_time_s: float | None = None,
+                         buffer_packets: int | None = None) -> float:
+    """Mean per-flow queueing delay [ms], Sec. III-E queueing model.
+
+    Per hop the M/M/1-form waiting time ``Psi(rho) * t_s`` capped by the full-buffer
+    drain time ``B * t_s = 58.6 us`` (``t_s`` = 0.586 us service time, ``B`` =
+    100-packet buffer), matching ``simulate.discrete_event.evaluate_slot``.
+    """
+    from ..const import BUFFER_PACKETS, SERVICE_TIME_S
+    ts = SERVICE_TIME_S if service_time_s is None else service_time_s
+    cap = (BUFFER_PACKETS if buffer_packets is None else buffer_packets) * ts
     vals = []
     for p in paths:
-        acc = float(np.sum(_psi(np.array([util_lookup.get(
-            (a, b) if a < b else (b, a), 0.0) for a, b in zip(p[:-1], p[1:])]))))
-        vals.append(acc * q)
+        acc = 0.0
+        for a, b in zip(p[:-1], p[1:]):
+            rho = min(util_lookup.get((a, b) if a < b else (b, a), 0.0), 0.9999)
+            acc += min(_psi_scalar(rho) * ts, cap)
+        vals.append(acc)
     if not vals:
         return 0.0
     if capacity_weight is None:
         return float(np.mean(vals)) * 1e3
     w = np.asarray(capacity_weight, dtype=float)
     return float(np.average(vals, weights=w)) * 1e3
+
+
+def _psi_scalar(rho: float, eps: float = 1e-6) -> float:
+    return rho / (1.0 - rho + eps)
