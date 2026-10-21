@@ -23,12 +23,17 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from ..const import (ALPHA_C, ALPHA_D, DELTA_SCORE, ETA, ISL_CAPACITY_MBPS,
-                     ISL_MAX_RANGE_KM, MAX_DEGREE, MAX_ITER,
+                     ISL_MAX_RANGE_KM, KAPPA_W_PER_KM, MAX_DEGREE, MAX_ITER,
                      NODE_THRESHOLD_LANCZOS)
 from ..routing.congestion_aware import route_commodities
 from ..simulate.discrete_event import _link_loss
-from ..spectral.fiedler import fiedler_vector
+from ..spectral.fiedler import algebraic_connectivity, fiedler_vector
 from .visibility import candidate_edges
+
+# Global objective weights omega_1..4 of Eq. (6) (manuscript Sec. III-B).
+# Diagnostics only: they enter the convergence trace recorded in ``diag`` and are
+# never read by the selection logic.
+J_OMEGA = (0.30, 0.25, 0.25, 0.20)
 
 
 def _minmax(x: np.ndarray) -> np.ndarray:
@@ -39,6 +44,35 @@ def _minmax(x: np.ndarray) -> np.ndarray:
     if hi - lo < 1e-12:
         return np.zeros_like(x)
     return (x - lo) / (hi - lo)
+
+
+def _objective_terms(n_sat: int, idx: np.ndarray, dist: np.ndarray,
+                     util_lookup: dict[tuple[int, int], float]) -> list[float]:
+    """Raw Eq. (6) sub-objective values for one routed iteration (diagnostics only).
+
+    Reading of the four sub-objectives, manuscript Sec. III:
+
+    * ``C_load`` -- congestion cost: mean per-link utilisation
+      ``rho_bar = (1/|E|) sum_e rho_e`` of the network under the current routing;
+    * ``F_LB``   -- Eq. (3): population std of the per-link utilisations;
+    * ``F_RB``   -- Eq. (4): lambda_2 of the active topology, computed with the
+      release's own ``algebraic_connectivity`` (the exact value the KPI reports;
+      measured ~0.06-0.2 s per call at N = 1,401);
+    * ``E_tot``  -- Eq. (5): raw power index ``kappa * sum_e d_e`` [W].
+
+    Returns ``[J_raw, C_load, F_LB, lambda2, E_tot_W]`` with
+    ``J_raw = omega . (C_load, F_LB, -F_RB, E_tot)`` in raw units.  Pure recording:
+    reads its arguments, mutates nothing, calls no RNG.
+    """
+    rhos = np.asarray(list(util_lookup.values()), dtype=float)
+    c_load = float(rhos.mean()) if rhos.size else 0.0
+    f_lb = float(rhos.std()) if rhos.size else 0.0
+    lam2 = (algebraic_connectivity(n_sat, [(int(a), int(b)) for a, b in idx])
+            if idx.size else 0.0)
+    e_tot_w = KAPPA_W_PER_KM * float(dist.sum()) if dist.size else 0.0
+    w1, w2, w3, w4 = J_OMEGA
+    j_raw = w1 * c_load + w2 * f_lb - w3 * lam2 + w4 * e_tot_w
+    return [j_raw, c_load, f_lb, lam2, e_tot_w]
 
 
 @dataclass
@@ -78,13 +112,19 @@ class TopologyState:
 
 def mst_cold_start(n_sat: int, cand: np.ndarray, d_max: float = ISL_MAX_RANGE_KM,
                    max_degree: int = MAX_DEGREE,
-                   density_fill: bool = True, use_mst: bool = True) -> TopologyState:
+                   density_fill: bool = True, use_mst: bool = True,
+                   static_edges: dict[tuple[int, int], float] | None = None) -> TopologyState:
     """Cold start for t = 0.
 
     Algorithm 1 initialises the first slot with an MST over the candidate set and then
     greedily adds edges in ascending distance order while the degree budget lasts.  With
     ``use_mst=False`` the MST step is skipped and only the descending-distance fill runs
     -- the cold start used by the "without MST warm start" ablation row.
+
+    Static ISLs are seeded first and their degree is counted against ``max_degree``:
+    the manuscript states that static ISLs "occupy degree at both endpoints", so a
+    satellite carrying two ring terminals enters the fill with four degree slots left,
+    never with six.
     """
     st = TopologyState(n_sat)
     if cand.size == 0:
@@ -99,6 +139,14 @@ def mst_cold_start(n_sat: int, cand: np.ndarray, d_max: float = ISL_MAX_RANGE_KM
         return x
 
     deg = np.zeros(n_sat, dtype=int)
+    # Static ring edges arrive with placeholder lengths (walker.py resolves them from
+    # the slot's candidate set); seed them with the real chord lengths here.
+    cand_map = {(min(int(a), int(b)), max(int(a), int(b))): float(c)
+                for a, b, c in cand}
+    for (a, b), d in (static_edges or {}).items():
+        st.add(a, b, cand_map.get((a, b), d))
+        deg[a] += 1
+        deg[b] += 1
     # Kruskal MST
     if use_mst:
         for e in order:
@@ -195,11 +243,7 @@ def select_cast(n_sat: int, positions_km: np.ndarray, demand: np.ndarray,
 
     if prev_state is None or not prev_state.edges:
         st = mst_cold_start(n_sat, cand, d_max, max_degree, density_fill=True,
-                            use_mst=mst_init)
-        if static_edges:
-            for (a, b), d in static_edges.items():
-                if (a, b) in cand_map:
-                    st.add(a, b, cand_map[(a, b)])
+                            use_mst=mst_init, static_edges=static_edges)
         warm_start = False
     else:
         warm_start = True
@@ -210,6 +254,7 @@ def select_cast(n_sat: int, positions_km: np.ndarray, demand: np.ndarray,
 
     hit_max_iter = True
     added_history: list[int] = []
+    j_history: list[list[float]] = []   # Eq. (6) trace, one entry per iteration
     for it in range(max_iter):
         idx, dist = st.index_and_dist()
         comms = commodities if commodities is not None else _demand_to_commodities(demand)
@@ -219,6 +264,10 @@ def select_cast(n_sat: int, positions_km: np.ndarray, demand: np.ndarray,
         util_lookup = res.utilization
         q = fiedler_vector(n_sat, [(int(a), int(b)) for a, b in idx],
                            NODE_THRESHOLD_LANCZOS)
+
+        # convergence instrumentation: Eq. (6) objective of the topology *entering*
+        # this iteration, evaluated on the fresh routing above.  Pure recording.
+        j_history.append(_objective_terms(n_sat, idx, dist, util_lookup))
 
         active = set(st.edges.keys())
         pool_mask = np.array([((min(int(a), int(b)), max(int(a), int(b))) not in active)
@@ -286,8 +335,15 @@ def select_cast(n_sat: int, positions_km: np.ndarray, demand: np.ndarray,
         idle = [k for k in st.edges
                 if k not in static_keys and final.loads_mbps.get(k, 0.0) <= 0.0]
         if idle:
+            # Algorithm 1, passive removal: "removed set is a subset of redundant
+            # (non-MST) links, so connectivity is preserved".  The MST of the active
+            # topology is the connectivity skeleton, so MST edges are never idle-removed
+            # no matter how the per-slot routing happens to fall; bridges are excluded
+            # as well (a non-MST edge of a connected graph is already a non-bridge --
+            # the bridge test is kept purely as a guard).
+            mst = _mst_edge_set(n_sat, st.edges)
             bridges = _find_bridges(n_sat, list(st.edges))
-            removable = [k for k in idle if k not in bridges]
+            removable = [k for k in idle if k not in mst and k not in bridges]
             if removable:
                 base_peak = max(final.utilization.values()) if final.utilization else 0.0
                 snapshot = dict(st.edges)
@@ -314,9 +370,18 @@ def select_cast(n_sat: int, positions_km: np.ndarray, demand: np.ndarray,
                     else:
                         st.edges = snapshot      # revert: the pruned topology is worse
 
+    # convergence instrumentation for the final accepted topology (post passive
+    # removal): the same read-only Eq. (6) evaluation on the final routing
+    f_idx, f_dist = st.index_and_dist()
+    j_final = _objective_terms(n_sat, f_idx, f_dist, final.utilization)
+
     diag = {
         "n_edges": len(st.edges),
         "edges_added_per_iter": added_history,
+        "J_per_iter": [row[0] for row in j_history],
+        "J_terms_per_iter": j_history,   # [J_raw, C_load, F_LB, lambda2, E_tot_W]
+        "J_final": j_final[0],
+        "J_final_terms": j_final,
         "idle_removed": n_idle_removed,
         "warm_start": warm_start,
         "routing": final,
@@ -385,6 +450,32 @@ def _is_connected(n_sat: int, edges: list[tuple[int, int]]) -> bool:
                 count += 1
                 stack.append(v)
     return count == n_sat
+
+
+def _mst_edge_set(n_sat: int, edges: dict[tuple[int, int], float]) -> set[tuple[int, int]]:
+    """Kruskal MST of the active edge set (weight = chord length), as a set of edge keys.
+
+    Deterministic: ties broken by edge key order.
+    """
+    order = sorted(edges.items(), key=lambda kv: (kv[1], kv[0]))
+    parent = list(range(n_sat))
+
+    def find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    mst: set[tuple[int, int]] = set()
+    for (a, b), _d in order:
+        ra, rb = find(a), find(b)
+        if ra == rb:
+            continue
+        parent[ra] = rb
+        mst.add((a, b))
+        if len(mst) == n_sat - 1:
+            break
+    return mst
 
 
 def _find_bridges(n_sat: int, edges: list[tuple[int, int]]) -> set[tuple[int, int]]:

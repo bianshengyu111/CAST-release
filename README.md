@@ -15,10 +15,11 @@ optional).
 The manuscript's two **learning-based baselines** — Wang-MADRL [19] and DGL-JCR [27] —
 are *not* reimplemented here. They are external methods with their own networks,
 training pipelines and hyper-parameters; a stand-in reimplementation would not be the
-method that was compared, so the release stops at CAST plus every baseline that needs no
-learning. Consequently the seven-algorithm ranking of Table 4 is **not** reproduced end
-to end by this code, and absolute KPI values are not guaranteed to match the
-manuscript's decimals (see *Notes on scope* and *Revision history*).
+method that was compared, so the release covers CAST plus every baseline that needs no
+learning. The revised manuscript presents exactly this five-method comparison, and the
+release reproduces it end to end (see *Revision history*, 2026-10-21); the two
+learning-based designs are reported in the paper as out-of-distribution reference
+points only.
 
 ## Layout
 
@@ -41,14 +42,16 @@ CAST-release/
 │                                   make_tables, make_figures
 ├── results/
 │   ├── weight_elicitation.csv      per-KPI expert-elicitation scores behind Table 8
+│   ├── raw_mst_v3_2026-10-21.csv   measured 250-run matrix behind the revised manuscript
 │   ├── raw_kpi_observations.csv    generated: raw per-run KPI observations
 │   ├── tables/, tables_full/       generated tables (CSV)
 │   └── figures/                    generated figures
 └── tests/test_smoke.py
 ```
 
-`results/weight_elicitation.csv` is the only tracked file under `results/`; the KPI dumps
-and the generated tables/figures are produced by the scripts above and are git-ignored.
+`results/weight_elicitation.csv` and `results/raw_mst_v3_2026-10-21.csv` are tracked; the
+other KPI dumps and the generated tables/figures are produced by the scripts above and
+are git-ignored.
 
 ## Requirements
 
@@ -106,12 +109,11 @@ alternation rather than sequentially. All constants are named in `src/const.py`.
 
 * In the original study the packet-level physics ran on the **StarPerf 2.0**
   discrete-event engine, which is obtained from its authors and is **not** redistributed
-  here. This release substitutes an equivalent, documented finite-buffer FIFO queueing
-  model so the pipeline is runnable end to end; `src/simulate/discrete_event.py` also
-  contains a genuine per-packet simulator for validation. The analytic model reproduces
-  the qualitative mechanism (single-digit percentage loss at a peak link utilisation in
-  the high eighties in the exposed configuration); its absolute loss/tail values are
-  **not** guaranteed to match the paper's decimals.
+  here. This release substitutes a documented finite-buffer FIFO queueing evaluation
+  (validated against a per-packet simulator on reduced instances) so the pipeline is
+  runnable end to end; **as of the 2026-10-21 revision the manuscript's reported
+  numbers are produced by this release**, and the paper's Simulation-platform section
+  says exactly that.
 * `results/weight_elicitation.csv` holds the raw Delphi-style panel scores (three
   panellists, three rounds, eleven KPIs) from which the weights in Table 8 were set. The
   panellists are anonymised as E1--E3 with their years of experience and role recorded in
@@ -123,14 +125,56 @@ alternation rather than sequentially. All constants are named in `src/const.py`.
 * **Scope of the comparison.** The evaluator implements CAST and the four non-learning
   baselines (6-nearest, Grid+, Triangle, Nie-DTC-DPSO). The two learning-based baselines
   of the manuscript are external methods and are not reimplemented, so the seven-algorithm
-  ranking of Table 4 is not reproduced end to end here. Within the covered set the composite
-  score ranks CAST first, then 6-nearest, Nie-DTC-DPSO, Triangle and Grid+: CAST takes the
-  lowest mean and tail delay, the lowest energy and the lowest load imbalance, while
-  Triangle reaches a lower loss and a marginally lower peak utilisation at six times the
-  delay and seven times the energy. These are the release's own numbers in the exposed
-  configuration, not the manuscript's.
+  ranking of the submitted version is not reproduced here — the revised manuscript itself
+  now presents the five-method comparison. Within the covered set the composite score
+  ranks CAST first (0.991), then 6-nearest (0.826), Nie-DTC-DPSO (0.818), Triangle (0.544)
+  and Grid+ (0.356): CAST takes the lowest packet loss, the lowest mean and tail delay,
+  the highest goodput and the lowest load imbalance, at the cost of the highest transport
+  energy of the three non-PSO methods (+43.6% over 6-nearest under the
+  distance-proportional proxy). These are the release's own measured numbers
+  (`results/raw_mst_v3_2026-10-21.csv`), and they are the numbers in the revised
+  manuscript.
 
 ## Revision history
+
+### 2026-10-21 — Algorithm 1 verbatim alignment and the v3 measurement matrix
+
+Three further changes, each enforcing a property the manuscript already states.
+
+* **Passive removal is restricted to redundant (non-MST) links.** Algorithm 1's
+  removal step reads "removed set ⊆ redundant (non-MST) links, so connectivity is
+  preserved". The previous release removed *every* idle non-bridge dynamic link,
+  which over 60 slots shed the active set from the cold-start fill down to ~1,860
+  long-span links. The removal candidates are now restricted to idle links that are
+  not part of the minimum spanning tree of the active topology (bridge test kept as
+  a guard; a non-MST edge of a connected graph is already a non-bridge). The steady
+  state is denser (~2,560 links) and lambda_2 rises five-fold.
+* **Static ISLs occupy degree in the cold start.** The manuscript states static ISLs
+  "occupy degree at both endpoints". The cold start previously added the intra-plane
+  ring *after* the degree-6 fill, so slot 1 ran at an average degree of 8. The ring
+  is now seeded first and its degree counted, and the MST/fill respect the remaining
+  budget: slot 1 opens at 4,201 links, maximum degree exactly 6.
+* **Static ring edges carry real chord lengths.** `static_intra_plane_edges`
+  returns placeholder lengths (the caller resolves them from the candidate set);
+  the cold start previously consumed the placeholders, making the ring a zero-cost
+  routing attractor. Lengths are now resolved from the candidate set.
+
+**Measured consequences (the v3 matrix, 250 runs = 5 methods x 5 flow levels x 10
+seeds x 60 slots, `results/raw_mst_v3_2026-10-21.csv`):** the release now reproduces
+the manuscript's five-method comparison end to end. CAST ranks first on the
+11-KPI composite under the panel weights (0.991 vs 0.826 for 6-nearest), under
+equal weights, under entropy and CRITIC weights, and under +/-50% perturbation of
+every individual weight; it cuts packet loss from 9.52% to 5.24% and peak link
+utilisation from 95.9% to 86.2% at equal backbone delay, and delivers 91.9% of
+flows under 20% random ISL failure (6-nearest: 84.8%). The honest costs, as
+reported in the revision: +43.6% transport energy under the distance-proportional
+proxy (sparser topology, longer links), and per-slot topology computation of
+~13.7 s (median; 46% of the 30-s slot budget). The delay decomposition is
+propagation-dominated (queueing <= 0.02% of the budget, bounded by the 100-packet
+buffer model), so the congestion benefit appears in loss and peak utilisation, not
+in delay. A determinism check re-running the N=1,401 cell of the scalability sweep
+reproduces the main matrix bit-for-bit on all KPIs except a 1-ULP lambda_2 wobble
+traced to scipy's ARPACK start vector.
 
 ### 2026-10-17 — measurement-pipeline corrections (second-round review)
 

@@ -48,6 +48,7 @@ class RunConfig:
     regime: str = "dynamic"       # "static" (fixed access mapping) or "dynamic"
     mst_init: bool = True         # False -> random-spanning cold start (ablation)
     routing_batch: int = 64       # commodities sharing one routing weight snapshot
+    slot_seconds: float = SEC_PER_SLOT   # slot duration tau (Sec. IV-A: 30 s)
 
 
 def _select_topology(cfg: RunConfig, walker, cand, positions_eci, demand, prev_state,
@@ -92,7 +93,7 @@ def run_configuration(cfg: RunConfig, walker, planes: int, sats_per_plane: int,
     static_edges = static_intra_plane_edges(planes, sats_per_plane, walker.active)
 
     for slot in range(cfg.n_slots):
-        t_s = slot * SEC_PER_SLOT
+        t_s = slot * cfg.slot_seconds
         pos_eci = walker.positions_eci(t_s)
         pos_ecef = walker.positions_ecef(t_s)
         src_sat = assign_access_stars(CITY_LATLON, pos_ecef)
@@ -119,7 +120,8 @@ def run_configuration(cfg: RunConfig, walker, planes: int, sats_per_plane: int,
         edge_lookup = {(min(int(a), int(b)), max(int(a), int(b))): float(c)
                        for a, b, c in zip(idx[:, 0], idx[:, 1], dist)}
         obs = evaluate_slot(res.paths, res.commodities, edge_lookup, res.utilization,
-                            walker.active, ca2=cfg.ca2, kappa=cfg.kappa)
+                            walker.active, ca2=cfg.ca2, kappa=cfg.kappa,
+                            window_s=cfg.n_slots * cfg.slot_seconds)
         obs.lambda2 = algebraic_connectivity(
             walker.active, [(int(a), int(b)) for a, b in idx])
         # unreachable commodities reduce reachability
