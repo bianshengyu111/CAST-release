@@ -205,6 +205,12 @@ re-tuning of constants.
   model is now: M/M/1-form waiting Psi(rho) * t_s capped by the full-buffer drain
   time B * t_s = 100 x 0.586 us = 58.6 us per hop, so path-total queueing is bounded
   by hops x 58.6 us. `QUEUE_FRAME_QUANTUM_S` is removed from `src/const.py`.
+* **Loss is the effective-buffer evaluation of the same section.** A link at utilisation
+  rho below saturation loses a fraction rho^(B/(1+Ca^2)) of its offered load (B = 100
+  packets, Ca^2 = 4 by default, so the exponent is 20), and a saturated link loses
+  1 - 1/rho of it; the flow-level figure accumulates over hops. It is a bounded
+  analytic congestion indicator evaluated from the same utilisation the routing step
+  sees, not a packet-exact forecast, and the manuscript states it as such.
 * **A measurement-pipeline invariant test suite is added (`tests/test_invariants.py`).**
   It encodes the second-round review's checklist: queueing delay <= buffer x service
   time x hops for every flow; peak utilisation >= the mean of any link subset (the
@@ -212,10 +218,12 @@ re-tuning of constants.
   utilisation statistics <= 1; and connectivity preserved, including the
   partial-plane configuration where a satellite has no intra-plane ring link at all.
 
-Consequences: absolute KPIs from this code differ from both the 2026-09-27 release
-runs and the previous manuscript decimals; the CSV files under `results/` are the
-outputs of this code, and `tests/` now covers the measurement pipeline as well as
-the algorithm.
+Consequences: this code is the artifact of record for the manuscript's numbers, which
+were re-derived from it; the CSV files under `results/` are its outputs, and `tests/`
+covers the measurement pipeline as well as the algorithm. Earlier releases and earlier
+manuscript drafts report different absolute values because both the algorithm semantics
+and the evaluation were corrected, not because the tables were transcribed from a
+different source.
 
 ### 2026-09-27 — scope and algorithm corrections
 
@@ -243,9 +251,11 @@ the algorithm.
   each slot. In the 5,000-flow configuration that sheds far more links per slot than the
   per-slot idle churn of the manuscript's ISL-switching table (~6.5 links), because
   congestion-aware shortest paths leave a large part of the active set unused in any one
-  slot. Active link counts and absolute KPIs over long runs are therefore not expected to
-  match the manuscript's: the release is a readable, runnable reference for the topology
-  and routing rules, not a numerical reproduction of Tables 4-7.
+  slot. Active link counts therefore differ from the per-slot switching figures of the
+  manuscript's ISL table, which measure churn rather than the steady-state active set.
+  The published performance tables are produced from this release by
+  `scripts/_run_matrix_ckpt.py` at the seeds recorded in its output; that script is the
+  numerical reference for Tables 4-7, and no number in them is transcribed by hand.
 
 ## Data availability
 

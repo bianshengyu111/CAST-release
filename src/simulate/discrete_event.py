@@ -115,7 +115,10 @@ def evaluate_slot(paths: Sequence[Sequence[int]],
             rho = min(utilization.get(k, 0.0), 0.9999)
             # per-hop queueing delay: M/M/1-form waiting Psi(rho) * t_s, bounded by the
             # time to drain a full buffer B * t_s = 58.6 us, so a saturated link cannot
-            # produce unbounded delay (Sec. III-E queueing model)
+            # produce unbounded delay (Sec. III-E queueing model).  The utilisation is
+            # capped at the model's ceiling RHO_EFF_MAX: the effective-buffer model is
+            # defined on the sub-saturation branch, and a link at or above saturation is
+            # charged that ceiling value (a conservative over-estimate of its loss).
             tq_hops.append(min(_psi(rho) * service_time_s,
                                buffer_packets * service_time_s))
             p_survive *= (1.0 - _link_loss(rho, buffer_packets, ca2))
@@ -175,9 +178,9 @@ def _link_loss(rho: float, buffer_packets: int, ca2: float) -> float:
     Two regimes:
 
     * ``rho < 1`` -- finite-buffer overflow with burstiness ``Ca^2``:
-      ``rho ** (B / (1 + Ca^2))``.  This reduces to the M/M/1/K tail ``rho^B`` for a
-      Poisson arrival process (``Ca^2 = 1``); a multiplexed, bursty aggregate shortens
-      the effective buffer, which is the regime the manuscript's 3-4 % loss corresponds
+      ``rho ** (B / (1 + Ca^2))``.  A smooth aggregate (``Ca^2 = 0``) keeps the full
+      buffer ``B`` in the exponent; a multiplexed, bursty aggregate shortens the
+      effective buffer, which is the regime the manuscript's loss figures correspond
       to (Sec. III-E).
     * ``rho >= 1`` -- the link is fluid-saturated: it can only carry ``C``, so the
       excess ``lambda - C`` is dropped, i.e. a loss fraction of ``1 - 1/rho``.
@@ -206,44 +209,59 @@ def packet_simulate_path(path: Sequence[int], edge_lookup: dict[tuple[int, int],
     if hops <= 0 or n_packets <= 0:
         return {"loss_frac": 0.0, "mean_ms": 0.0, "p95_ms": 0.0, "jitter_ms": 0.0}
     rate_pps = rate_mbps * 1e6 / PACKET_BITS
-    # burst envelope: alternating on/off at a slot-scale timescale
-    burst_state = rng.random(n_packets) < 0.15
-    factor = np.where(burst_state, 1.0 + 2.0 * np.sqrt(ca2), np.maximum(0.05, 1.0 - 0.5))
-    inter = rng.exponential(1.0 / np.maximum(rate_pps * factor, 1e-9))
+    # Burst envelope: on/off modulation with E[factor] = 1, so the offered *mean* rate
+    # is exactly ``rate_mbps`` whatever the burst parameters are.  ``ca2`` sets the
+    # peak/off ratio; the resulting Ca^2 at the multiplexed link is reported by
+    # scripts/validate_queue_model.py so the two back-ends are compared at a stated
+    # burstiness rather than an assumed one.
+    p_on = 0.15
+    f_hi = 1.0 + 2.0 * np.sqrt(ca2)
+    f_lo = (1.0 - p_on * f_hi) / (1.0 - p_on)
+    f_lo = f_lo if f_lo > 0.01 else 0.01
+    burst_state = rng.random(n_packets) < p_on
+    factor = np.where(burst_state, f_hi, f_lo)
+    inter_s = rng.exponential(1.0 / np.maximum(rate_pps * factor, 1e-9))
+    # exponential() on a modulated rate makes the realised mean depend on E[1/factor],
+    # so rescale to pin the realised offered load at exactly ``rate_mbps``; the burst
+    # structure (and hence the realised Ca^2) is preserved.
+    inter_s *= (1.0 / rate_pps) / float(np.mean(inter_s))
+    inter_ms = inter_s * 1e3                       # the loop below works in ms
     t_prop = np.array([edge_lookup[(min(a, b), max(a, b))]
                        for a, b in zip(path[:-1], path[1:])]) / C_KM_S * 1e3
-    queues = [0] * hops
-    last_free = [0.0] * hops
+    # per-hop single-server FIFO with a finite ``buffer_packets`` tail-drop queue;
+    # ``free_at[h]`` is the time the server at hop h becomes free, so the backlog a
+    # packet finds there is (start - t) / t_s packets -- that is the quantity the
+    # buffer limit applies to.
+    free_at = [0.0] * hops
     delays = np.zeros(n_packets)
+    alive = np.zeros(n_packets, dtype=bool)
     lost = 0
     t_arr = 0.0
     service_ms = SERVICE_TIME_S * 1e3
     for p in range(n_packets):
-        t_arr += inter[p]
+        t_arr += inter_ms[p]
         t = t_arr
         delay = 0.0
         dropped = False
         for h in range(hops):
-            if queues[h] >= buffer_packets:
+            start = t if t > free_at[h] else free_at[h]
+            queued = (start - t) / service_ms          # packets ahead, incl. in service
+            if queued >= buffer_packets:
                 dropped = True
                 break
-            start = max(t, last_free[h])
-            queues[h] += 1
-            end = start + service_ms
-            last_free[h] = end
+            free_at[h] = start + service_ms
             delay += (start - t) + service_ms
-            t = end
-            # dequeue one packet per service slot
-            queues[h] = max(0, queues[h] - 1)
+            t = free_at[h]
         if dropped:
             lost += 1
         else:
             delays[p] = delay + float(t_prop.sum())
-    ok = delays[:n_packets]
+            alive[p] = True
+    ok = delays[alive]                                # delivered packets only
     d = np.diff(ok)
     return {
         "loss_frac": lost / n_packets,
-        "mean_ms": float(np.mean(ok)),
-        "p95_ms": float(np.percentile(ok, TAIL_PERCENTILE)),
+        "mean_ms": float(np.mean(ok)) if ok.size else 0.0,
+        "p95_ms": float(np.percentile(ok, TAIL_PERCENTILE)) if ok.size else 0.0,
         "jitter_ms": float(np.std(d)) if d.size else 0.0,
     }
